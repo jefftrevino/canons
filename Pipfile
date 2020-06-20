@@ -6,15 +6,15 @@ verify_ssl = true
 [dev-packages]
 
 [packages]
-abjad = "*"
 black = "*"
 pandas = "*"
 jupyter = "*"
 notebook = "*"
 abjad-ext-tonality = "*"
 ipdb = "*"
-abjad-ext-ipython = "*"
 graphviz = "*"
+a953734 = {path = "./abjad"}
+31186ac = {path = "./abjad-ext-ipython"}
 
 [requires]
 python_version = "3.7"

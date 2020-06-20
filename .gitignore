@@ -130,3 +130,7 @@ dmypy.json
 
 # OS X cruft
 .DS_Store
+
+# abjad
+/abjad
+/abjad-ext-ipython
