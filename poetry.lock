@@ -17,6 +17,17 @@ nauert = ["abjad-ext-nauert (>=3.15)"]
 rmakers = ["abjad-ext-rmakers (>=3.15)"]
 
 [[package]]
+name = "abjad-ext-rmakers"
+version = "3.15"
+description = "Rhythm-makers extend Abjad with tools for rhythmic construction."
+category = "main"
+optional = false
+python-versions = ">=3.10"
+
+[package.dependencies]
+abjad = ">=3.15"
+
+[[package]]
 name = "alabaster"
 version = "0.7.13"
 description = "A configurable sidebar-enabled Sphinx theme"
@@ -1483,11 +1494,14 @@ python-versions = ">=3.7"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "48595ae1032b951ba19177364526df678f5adb25aa18d1e0de9ab0a214e83740"
+content-hash = "1214fb50b7dc14b6c8944d381f0ad92c85ecccd36774877a37f8f08b483c6c4e"
 
 [metadata.files]
 abjad = [
     {file = "abjad-3.15.tar.gz", hash = "sha256:644f311868a7435d7abe708e079ab60c4ed954234ae5799ff3f4d36c39829449"},
+]
+abjad-ext-rmakers = [
+    {file = "abjad-ext-rmakers-3.15.tar.gz", hash = "sha256:b00fc6b31e360ed06dd70881ab615c2f4f27e9ce2cda223d429aec670ac1aacc"},
 ]
 alabaster = [
     {file = "alabaster-0.7.13-py3-none-any.whl", hash = "sha256:1ee19aca801bbabb5ba3f5f258e4422dfa86f82f3e9cefb0859b283cdd7f62a3"},
