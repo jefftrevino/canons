@@ -332,7 +332,7 @@ class SimplifiedCanonGenerator:
         
         # Set intervals to search (default: second through seventh, avoiding unison)
         if search_intervals is None:
-            self.search_intervals = [2, 3, 4, 5, 6, 7]  # Second through seventh
+            self.search_intervals = [3, 5, 6, 8]  # Second through seventh
         else:
             self.search_intervals = search_intervals
         
@@ -458,9 +458,10 @@ class SimplifiedCanonGenerator:
                             entry_delay: Fraction, canon_interval: int = 1) -> abjad.Staff:
         """
         Create a voice with prolated durations and diatonic transposition.
+        Voices repeat their melodies to fill the entire remaining duration after entry.
         
         Args:
-            prolation_factor: Factor to multiply durations by
+            prolation_factor: Factor to multiply durations by for the entire canon
             voice_number: Voice number (1, 2, or 3)
             entry_delay: How long to wait before entering
             canon_interval: Scale degree interval for this canon (1=unison, 2=second, etc.)
@@ -487,35 +488,79 @@ class SimplifiedCanonGenerator:
                     components.append(abjad.Rest('r8'))
                     remaining_delay -= Fraction(1, 8)
         
-        # Copy and transform melody notes
+        # Calculate total piece duration (when voice 3 finishes)
+        # Voice 3 starts at: original_duration + original_duration * prolation_factor
+        # Voice 3 duration: original_duration * prolation_factor^2
+        total_duration = (self.original_melody_duration + 
+                         self.original_melody_duration * prolation_factor + 
+                         self.original_melody_duration * (prolation_factor ** 2))
+        
+        # Calculate how long this voice needs to play after entry
+        remaining_duration = total_duration - entry_delay
+        
+        # Calculate this voice's prolation
+        if voice_number == 1:
+            voice_prolation = 1
+        elif voice_number == 2:
+            voice_prolation = prolation_factor
+        else:  # voice_number == 3
+            voice_prolation = prolation_factor ** 2
+        
+        # Calculate how many repetitions needed to fill the remaining duration
+        single_statement_duration = self.original_melody_duration * voice_prolation
+        repetitions_needed = int(remaining_duration / single_statement_duration) + 1
+        
+        if self.debug:
+            print(f"  Voice {voice_number}: {repetitions_needed} repetitions, {voice_prolation}x prolation")
+            print(f"    Entry delay: {entry_delay}, Remaining duration: {remaining_duration}")
+            print(f"    Single statement duration: {single_statement_duration}")
+        
+        # Copy and transform melody notes for each repetition
         melody_notes = self.copy_melody_notes()
         
-        # Collect pitches and durations for make_notes
-        pitches = []
-        durations = []
+        # Calculate measure duration for splitting long notes
+        measure_duration = Fraction(self.time_signature.numerator, self.time_signature.denominator)
+        max_duration = measure_duration  # Split anything longer than 1 measure
         
-        for note in melody_notes:
-            # Apply prolation to duration
-            new_duration = note.written_duration() * prolation_factor
+        # Create notes one repetition at a time
+        for rep in range(repetitions_needed):
+            # Collect pitches and durations for this single repetition
+            rep_pitches = []
+            rep_durations = []
             
-            # Apply diatonic transposition based on voice number and canon interval
-            new_pitch = note.written_pitch()
-            if voice_number == 2:
-                # Voice 2: transpose down by (canon_interval - 1) scale degrees
-                scale_degrees_down = canon_interval - 1
-                new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
-            elif voice_number == 3:
-                # Voice 3: transpose down by 2 * (canon_interval - 1) scale degrees
-                scale_degrees_down = 2 * (canon_interval - 1)
-                new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
+            for note in melody_notes:
+                # Apply prolation to duration  
+                new_duration = note.written_duration() * voice_prolation
+                
+                # Apply diatonic transposition based on voice number and canon interval
+                new_pitch = note.written_pitch()
+                if voice_number == 2:
+                    # Voice 2: transpose down by (canon_interval - 1) scale degrees
+                    scale_degrees_down = canon_interval - 1
+                    new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
+                elif voice_number == 3:
+                    # Voice 3: transpose down by 2 * (canon_interval - 1) scale degrees
+                    scale_degrees_down = 2 * (canon_interval - 1)
+                    new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
+                
+                # Split long durations before passing to make_notes
+                if new_duration <= max_duration:
+                    # Duration is manageable
+                    rep_pitches.append(new_pitch)
+                    rep_durations.append(abjad.Duration(new_duration))
+                else:
+                    # Duration is too long, split into measure-length chunks
+                    remaining_duration = new_duration
+                    while remaining_duration > 0:
+                        chunk_duration = min(remaining_duration, max_duration)
+                        rep_pitches.append(new_pitch)
+                        rep_durations.append(abjad.Duration(chunk_duration))
+                        remaining_duration -= chunk_duration
             
-            pitches.append(new_pitch)
-            durations.append(new_duration)
-        
-        # Use make_notes to handle complex durations properly
-        if pitches and durations:
-            prolated_notes = abjad.makers.make_notes(pitches, durations)
-            components.extend(prolated_notes)
+            # Now make_notes can handle all durations safely
+            if rep_pitches and rep_durations:
+                repetition_notes = abjad.makers.make_notes(rep_pitches, rep_durations)
+                components.extend(repetition_notes)
         
         # Create staff
         staff_name = f"Voice {voice_number}"
