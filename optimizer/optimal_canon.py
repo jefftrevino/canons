@@ -378,69 +378,66 @@ class SimplifiedCanonGenerator:
     def transpose_pitch_by_scale_degrees(self, pitch: abjad.NamedPitch, scale_degrees: int) -> abjad.NamedPitch:
         """
         Transpose a pitch down by the specified number of diatonic scale degrees.
+        
+        Args:
+            pitch: Original pitch
+            scale_degrees: Number of scale degrees to transpose down (0=unison, 1=down one degree, etc.)
+            
+        Returns:
+            Transposed pitch within the key
         """
+        if scale_degrees == 0:
+            return pitch
+            
         try:
-            # Get the current pitch class
-            current_pc = pitch.pitch_class()
-            current_pc_name = current_pc.name()
+            # Map scale degrees to diatonic intervals (going down)
+            interval_map = {
+                1: 'M2',   # Down a major second
+                2: 'M3',   # Down a major third  
+                3: 'P4',   # Down a perfect fourth
+                4: 'P5',   # Down a perfect fifth
+                5: 'M6',   # Down a major sixth
+                6: 'M7',   # Down a major seventh
+                7: 'P8',   # Down an octave
+            }
             
-            # Find the current position in the scale
-            scale_names = [pc.name() for pc in self.scale_pitches]
-            if current_pc_name not in scale_names:
-                # Find closest scale degree
-                current_number = current_pc.number()
-                closest_pc = min(self.scale_pitches, 
-                               key=lambda pc: min(abs(pc.number() - current_number),
-                                                 abs(pc.number() - current_number + 12),
-                                                 abs(pc.number() - current_number - 12)))
-                current_scale_index = scale_names.index(closest_pc.name())
+            # Handle larger intervals by octaves + remaining degrees
+            octaves_down = scale_degrees // 7
+            remaining_degrees = scale_degrees % 7
+            
+            # Create the interval
+            if remaining_degrees == 0 and octaves_down > 0:
+                # Pure octave transposition
+                interval_name = f'P{octaves_down * 8}'
+            elif octaves_down > 0:
+                # Compound interval
+                base_interval = interval_map[remaining_degrees]
+                # Convert to compound interval (add 7 for each octave)
+                base_number = int(base_interval[1:])
+                compound_number = base_number + (octaves_down * 7)
+                interval_name = base_interval[0] + str(compound_number)
             else:
-                current_scale_index = scale_names.index(current_pc_name)
+                # Simple interval
+                interval_name = interval_map[remaining_degrees]
             
-            # Calculate new scale position (wrapping around)
-            new_scale_index = (current_scale_index - scale_degrees) % len(self.scale_pitches)
-            new_pc = self.scale_pitches[new_scale_index]
+            # Create the interval (negative for downward)
+            interval = abjad.NamedInterval(f'-{interval_name}')
             
-            # Calculate octave adjustment
-            octave_adjustment = 0
-            if scale_degrees > 0 and new_scale_index > current_scale_index:
-                octave_adjustment = -1
+            # Create a temporary note to transpose
+            temp_note = abjad.Note(pitch, abjad.Duration(1, 4))
             
-            # Get the original pitch's octave information
-            original_name = str(pitch)
-            apostrophes = original_name.count("'")
-            commas = original_name.count(",")
+            # Apply transposition
+            abjad.mutate.transpose(temp_note, interval)
             
-            # Calculate new octave
-            if apostrophes > 0:
-                new_octave_apostrophes = max(0, apostrophes + octave_adjustment)
-                new_commas = 0
-            elif commas > 0:
-                new_commas = max(0, commas - octave_adjustment)
-                new_octave_apostrophes = 0
-            else:
-                if octave_adjustment > 0:
-                    new_octave_apostrophes = octave_adjustment
-                    new_commas = 0
-                elif octave_adjustment < 0:
-                    new_commas = -octave_adjustment
-                    new_octave_apostrophes = 0
-                else:
-                    new_octave_apostrophes = 0
-                    new_commas = 0
-            
-            # Build new pitch name
-            new_pitch_name = new_pc.name()
-            if new_octave_apostrophes > 0:
-                new_pitch_name += "'" * new_octave_apostrophes
-            elif new_commas > 0:
-                new_pitch_name += "," * new_commas
-            
-            return abjad.NamedPitch(new_pitch_name)
+            # Return the transposed pitch
+            return temp_note.written_pitch()
                 
         except Exception as e:
             if self.debug:
-                print(f"Transposition error: {e}")
+                print(f"Transposition error for {pitch} down {scale_degrees} degrees: {e}")
+                import traceback
+                traceback.print_exc()
+            print(f"Scale degree transposition error for {pitch}, returning original")
             return pitch
     
     def extract_melody_notes(self) -> List[abjad.Note]:
@@ -508,15 +505,11 @@ class SimplifiedCanonGenerator:
             print(f"    Entry delay: {entry_delay}, Remaining duration: {remaining_duration}")
             print(f"    Single statement duration: {single_statement_duration}")
         
-        # Calculate measure duration for splitting long notes
-        measure_duration = Fraction(self.time_signature.numerator, self.time_signature.denominator)
+        # Create notes one repetition at a time (no manual splitting - let meter handle it)
+        melody_notes = self.extract_melody_notes()  # Get original notes for reference
         
-        # Copy and transform melody notes for each repetition
-        melody_notes = self.copy_melody_notes()
-        
-        # Create notes one repetition at a time
         for rep in range(repetitions_needed):
-            # Process each note individually to handle tying correctly
+            # Process each note individually
             for note in melody_notes:
                 # Apply prolation to duration  
                 new_duration = note.written_duration() * voice_prolation
@@ -532,37 +525,21 @@ class SimplifiedCanonGenerator:
                     scale_degrees_down = 2 * (canon_interval - 1)
                     new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
                 
-                # Split long durations and create tied notes
-                if new_duration <= measure_duration:
-                    # Duration fits in one measure - create single note
-                    single_note = abjad.makers.make_leaves([[new_pitch]], [abjad.Duration(new_duration)])
-                    components.extend(single_note)
-                else:
-                    # Duration spans multiple measures - split and tie
-                    split_durations = []
-                    remaining_duration_for_note = new_duration
-                    
-                    while remaining_duration_for_note > 0:
-                        chunk_duration = min(remaining_duration_for_note, measure_duration)
-                        split_durations.append(abjad.Duration(chunk_duration))
-                        remaining_duration_for_note -= chunk_duration
-                    
-                    # Create the split notes - all with same pitch (wrapped in lists for make_leaves)
-                    pitch_lists = [[new_pitch]] * len(split_durations)
-                    split_notes = abjad.makers.make_leaves(pitch_lists, split_durations)
-                    
-                    # Tie them together since they represent one original note
-                    if len(split_notes) > 1:
-                        abjad.tie(split_notes)
-                    
-                    components.extend(split_notes)
+                # Create note with full prolated duration - let meter handle splitting
+                prolated_note = abjad.makers.make_leaves([[new_pitch]], [abjad.Duration(new_duration)])
+                components.extend(prolated_note)
         
         # Create staff
         staff_name = f"Voice {voice_number}"
         staff = abjad.Staff(components, name=staff_name)
         
-        # Apply meter boundaries
-        self.apply_meter_boundaries(staff)
+        # Apply meter-based rewriting to split long notes at measure boundaries
+        try:
+            # Use the meter from the judge to rewrite the staff
+            self.judge.meter.rewrite_meter(staff, self.time_signature)
+        except Exception as e:
+            if self.debug:
+                print(f"Warning: Could not apply meter rewriting to voice {voice_number}: {e}")
         
         return staff
     
@@ -776,7 +753,7 @@ if __name__ == "__main__":
     generator = SimplifiedCanonGenerator(
         melody_staff, 
         time_signature,
-        key="c major",
+        key="a major",  # Changed to A major, the key of Arirang
         min_prolation=2,
         max_prolation=4,  # Search prolation factors 2, 3, 4
         search_intervals=[2, 3, 4, 5, 6],  # Skip unison and 7th (avoid unison, 7th often dissonant)
