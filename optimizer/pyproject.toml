@@ -1,0 +1,20 @@
+[project]
+name = "optimizer"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Jeff Trevino",email = "jeffrey.trevino@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "abjad (>=3.28,<4.0)"
+]
+
+[tool.poetry]
+packages = [{include = "optimizer", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
