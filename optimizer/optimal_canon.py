@@ -1,7 +1,6 @@
 import abjad
 from fractions import Fraction
 from typing import List, Tuple, Dict, Optional
-import itertools
 
 class Rubric:
     """
@@ -21,18 +20,6 @@ class Rubric:
                  overall_consonance_bonus: float = 10.0):
         """
         Initialize scoring rubric.
-        
-        Args:
-            strong_beat_consonance: Points for consonant intervals on strong beats
-            medium_beat_consonance: Points for consonant intervals on medium beats
-            weak_beat_consonance: Points for consonant intervals on weak beats
-            strong_beat_unison_penalty: Penalty for unisons on strong beats
-            medium_beat_unison_penalty: Penalty for unisons on medium beats
-            weak_beat_unison_penalty: Penalty for unisons on weak beats
-            strong_beat_dissonance_penalty: Penalty for dissonance on strong beats
-            medium_beat_dissonance_penalty: Penalty for dissonance on medium beats
-            weak_beat_dissonance_penalty: Penalty for dissonance on weak beats
-            overall_consonance_bonus: Bonus multiplier for overall consonance ratio
         """
         self.strong_beat_consonance = strong_beat_consonance
         self.medium_beat_consonance = medium_beat_consonance
@@ -53,19 +40,13 @@ class Judge:
     Evaluates canon scores according to a given rubric.
     """
     
-    def __init__(self, rubric: Rubric, beat_template: List[str], time_signature: abjad.TimeSignature, debug: bool = False):
+    def __init__(self, rubric: Rubric, time_signature: abjad.TimeSignature, debug: bool = False):
         """
         Initialize judge with scoring rubric.
-        
-        Args:
-            rubric: Rubric defining scoring criteria
-            beat_template: Beat strength template ['S', 'w', 'm', 'w']
-            time_signature: Time signature for beat strength calculation
-            debug: If True, print detailed analysis
         """
         self.rubric = rubric
-        self.beat_template = beat_template
         self.time_signature = time_signature
+        self.meter = self._create_meter_from_time_signature(time_signature)
         self.debug = debug
         
         # Define consonant intervals
@@ -78,6 +59,63 @@ class Judge:
             0, 7, 5, 4, 3, 8, 9  # Semitone classes
         }
     
+    def _create_meter_from_time_signature(self, time_signature: abjad.TimeSignature) -> abjad.Meter:
+        """
+        Create an Abjad Meter from a time signature using rhythm tree strings.
+        
+        Args:
+            time_signature: The time signature to convert
+            
+        Returns:
+            abjad.Meter instance with proper metrical hierarchy
+        """
+        numerator = time_signature.numerator
+        denominator = time_signature.denominator
+        
+        # Create rhythm tree using string parsing for common meters
+        if numerator == 2 and denominator == 4:
+            # 2/4: Simple duple meter
+            string = "(2/4 (1/4 1/4))"
+            
+        elif numerator == 3 and denominator == 4:
+            # 3/4: Simple triple meter
+            string = "(3/4 (1/4 1/4 1/4))"
+            
+        elif numerator == 4 and denominator == 4:
+            # 4/4: Hierarchical structure with strong-weak / medium-weak grouping
+            string = "(4/4 ((2/4 (1/4 1/4)) (2/4 (1/4 1/4))))"
+            
+        elif numerator == 6 and denominator == 8:
+            # 6/8: Compound duple meter with two dotted-quarter groupings
+            string = "(6/8 ((3/8 (1/8 1/8 1/8)) (3/8 (1/8 1/8 1/8))))"
+            
+        elif numerator == 9 and denominator == 8:
+            # 9/8: Compound triple meter
+            string = "(9/8 ((3/8 (1/8 1/8 1/8)) (3/8 (1/8 1/8 1/8)) (3/8 (1/8 1/8 1/8))))"
+            
+        elif numerator == 12 and denominator == 8:
+            # 12/8: Compound quadruple meter
+            string = "(12/8 ((3/8 (1/8 1/8 1/8)) (3/8 (1/8 1/8 1/8)) (3/8 (1/8 1/8 1/8)) (3/8 (1/8 1/8 1/8))))"
+            
+        elif numerator == 5 and denominator == 4:
+            # 5/4: Asymmetrical meter - can be grouped 3+2 or 2+3
+            string = "(5/4 ((3/4 (1/4 1/4 1/4)) (2/4 (1/4 1/4))))"
+            
+        elif numerator == 7 and denominator == 8:
+            # 7/8: Asymmetrical meter - can be grouped 3+2+2 or 2+3+2 or 2+2+3
+            string = "(7/8 ((3/8 (1/8 1/8 1/8)) (2/8 (1/8 1/8)) (2/8 (1/8 1/8))))"
+            
+        else:
+            # Generic fallback for other time signatures - simple flat structure
+            beat_unit = f"1/{denominator}"
+            beats = " ".join([beat_unit] * numerator)
+            string = f"({numerator}/{denominator} ({beats}))"
+        
+        # Parse the string to create rhythm tree container
+        rhythm_tree_container = abjad.rhythmtrees.parse(string)[0]  # Extract first element from list
+        
+        return abjad.Meter(rhythm_tree_container)
+    
     def get_beat_strength(self, offset: Fraction) -> str:
         """Determine beat strength at given offset."""
         beats_per_measure = self.time_signature.numerator
@@ -86,8 +124,28 @@ class Judge:
         position_in_measure = offset % (beats_per_measure * beat_duration)
         beat_number = int(position_in_measure / beat_duration)
         
-        template_index = beat_number % len(self.beat_template)
-        return self.beat_template[template_index]
+        # This old line should be removed - using meter instead
+        # template_index = beat_number % len(self.beat_template)
+        # return self.beat_template[template_index]
+        
+        # Use the meter-based approach instead
+        try:
+            measure_duration = Fraction(self.time_signature.numerator, self.time_signature.denominator)
+            normalized_offset = offset % measure_duration
+            beat_depth = self.meter.beat_depth_at_offset(normalized_offset)
+            
+            if beat_depth == 0:
+                return 'S'
+            elif beat_depth == 1:
+                return 'm'
+            else:
+                return 'w'
+        except:
+            # Fallback
+            if beat_number == 0:
+                return 'S'
+            else:
+                return 'w'
     
     def calculate_interval(self, pitch1: abjad.NamedPitch, pitch2: abjad.NamedPitch) -> str:
         """Calculate interval between two pitches."""
@@ -126,9 +184,6 @@ class Judge:
         """
         Evaluate a score according to the rubric.
         
-        Args:
-            score: Abjad Score to evaluate
-            
         Returns:
             Float score (higher is better)
         """
@@ -217,76 +272,7 @@ class Judge:
         final_score = total_score / max(moment_count, 1)
         
         # Debug output
-    def apply_meter_boundaries(self, staff: abjad.Staff) -> None:
-        """
-        Split notes at meter boundaries and add ties as needed.
-        """
-        # First, ensure we have a time signature attached
-        time_sig_found = False
-        for leaf in abjad.iterate.leaves(staff):
-            indicators = abjad.get.indicators(leaf, abjad.TimeSignature)
-            if indicators:
-                time_sig_found = True
-                break
-        
-        if not time_sig_found and len(staff) > 0:
-            # Attach time signature to first leaf if not present
-            abjad.attach(self.time_signature, staff[0])
-        
-        # Use Abjad's meter to split notes at measure boundaries
-        try:
-            # Apply meter to the staff - this splits long notes at barlines
-            abjad.Meter.rewrite_meter(staff, self.time_signature)
-        except Exception as e:
-            if self.debug:
-                print(f"    Warning: Could not apply meter rewriting: {e}")
-            # Fallback: manually split long durations if automatic rewriting fails
-            self._manual_meter_split(staff)
-    
-    def _manual_meter_split(self, staff: abjad.Staff) -> None:
-        """
-        Manually split notes that cross barlines - fallback method.
-        """
-        measure_duration = Fraction(self.time_signature.numerator, self.time_signature.denominator)
-        current_position = Fraction(0)
-        
-        # Convert staff to a list to allow modification during iteration
-        leaves = list(abjad.iterate.leaves(staff))
-        
-        for leaf in leaves:
-            if isinstance(leaf, abjad.Note):
-                note_duration = leaf.written_duration()
-                note_end = current_position + note_duration
-                
-                # Check if note crosses a barline
-                current_measure_end = ((current_position // measure_duration) + 1) * measure_duration
-                
-                if note_end > current_measure_end and current_position < current_measure_end:
-                    # Note crosses barline, needs to be split
-                    try:
-                        # Duration before barline
-                        first_duration = current_measure_end - current_position
-                        # Duration after barline  
-                        second_duration = note_end - current_measure_end
-                        
-                        if first_duration > 0 and second_duration > 0:
-                            # Create two tied notes
-                            first_note = abjad.Note(leaf.written_pitch(), first_duration)
-                            second_note = abjad.Note(leaf.written_pitch(), second_duration)
-                            
-                            # Add tie
-                            abjad.tie([first_note, second_note])
-                            
-                            # Replace the original note
-                            leaf_index = staff.index(leaf)
-                            staff.pop(leaf_index)
-                            staff.insert(leaf_index, first_note)
-                            staff.insert(leaf_index + 1, second_note)
-                    except:
-                        # If splitting fails, leave the note as is
-                        pass
-            
-            current_position += leaf.written_duration()
+        if self.debug:
             print(f"    === Judge Analysis ===")
             for analysis in interval_analysis[:6]:
                 offset = analysis['offset']
@@ -310,94 +296,77 @@ class Judge:
             
         return final_score
 
-class CanonGenerator:
+class SimplifiedCanonGenerator:
     """
-    Generates optimal three-voice canons at the octave using Abjad.
-    Uses search algorithm to find best entry points for maximum consonance on strong beats.
+    Generates optimal three-voice prolation canons with simplified entry timing.
+    
+    Voice 1: Original melody at normal speed
+    Voice 2: Enters after Voice 1 completes, prolation factor p (2x, 3x, etc.)
+    Voice 3: Enters after Voice 2 completes, prolation factor p² (4x, 9x, etc.)
+    
+    Searches both prolation factors and canon intervals for optimal consonance.
     """
     
     def __init__(self, melody_staff: abjad.Staff, time_signature: abjad.TimeSignature, 
-                 beat_template: List[str], key: str = "c major",
-                 max_entry_delay_measures: int = 2, debug: bool = False, 
-                 add_analysis_markup: bool = False, judge: Judge = None,
-                 search_intervals: List[int] = None, entry_resolution: str = "beat",
-                 search_prolations: List[int] = None):
+                 key: str = "c major", min_prolation: int = 2, max_prolation: int = 5, 
+                 search_intervals: List[int] = None, debug: bool = False, judge: Judge = None):
         """
-        Initialize canon generator.
+        Initialize simplified canon generator.
         
         Args:
-            melody_staff: Abjad Staff containing the melody (voice 1)
+            melody_staff: Abjad Staff containing the melody
             time_signature: Time signature for the canon
-            beat_template: List of beat strengths ['S', 'w', 'm', 'w'] etc.
             key: Key for diatonic transposition (e.g., "c major", "g major")
-            max_entry_delay_measures: Maximum delay in measures for voices 2 and 3
+            min_prolation: Minimum prolation factor to search (default: 2)
+            max_prolation: Maximum prolation factor to search (default: 5)
+            search_intervals: List of canon intervals to search (default: [2,3,4,5,6,7])
             debug: If True, print verbose debugging information
-            add_analysis_markup: If True, add interval and consonance markup to the score
             judge: Judge instance for scoring canons (if None, creates default)
-            search_intervals: List of canon intervals to search (if None, searches 1-7)
-            entry_resolution: Entry timing resolution - "beat", "downbeat", "strong_beat", "half_beat", "quarter_beat"
-            search_prolations: List of prolation values to search (if None, searches [1, 2])
         """
         self.melody_staff = melody_staff
         self.time_signature = time_signature
-        self.beat_template = beat_template
         self.key = key
-        self.max_entry_delay = max_entry_delay_measures
+        self.min_prolation = min_prolation
+        self.max_prolation = max_prolation
         self.debug = debug
-        self.add_analysis_markup = add_analysis_markup
-        self.entry_resolution = entry_resolution
+        
+        # Set intervals to search (default: second through seventh, avoiding unison)
+        if search_intervals is None:
+            self.search_intervals = [2, 3, 4, 5, 6, 7]  # Second through seventh
+        else:
+            self.search_intervals = search_intervals
         
         # Use provided judge or create default
         if judge is None:
             default_rubric = Rubric()
-            self.judge = Judge(default_rubric, beat_template, time_signature, debug)
+            self.judge = Judge(default_rubric, time_signature, debug)
         else:
             self.judge = judge
-        
-        # Set intervals to search (default: unison through seventh)
-        if search_intervals is None:
-            self.search_intervals = [1, 2, 3, 4, 5, 6, 7]  # Unison through seventh
-        else:
-            self.search_intervals = search_intervals
-        
-        # Set prolations to search (default: normal and double time)
-        if search_prolations is None:
-            self.search_prolations = [1, 2]  # Normal and augmentation
-        else:
-            self.search_prolations = search_prolations
         
         # Parse the key to get the scale
         self.scale_pitches = self._get_scale_pitches(key)
         
-    def _get_scale_pitches(self, key: str) -> List[abjad.NamedPitchClass]:
-        """
-        Get the pitch classes for a given key.
+        # Calculate original melody duration
+        self.original_melody_duration = sum(note.written_duration() 
+                                          for note in self.extract_melody_notes())
         
-        Args:
-            key: Key signature like "c major", "g major", "a minor"
-            
-        Returns:
-            List of pitch classes in the scale
-        """
-        # Parse key string
+    def _get_scale_pitches(self, key: str) -> List[abjad.NamedPitchClass]:
+        """Get the pitch classes for a given key."""
         parts = key.lower().split()
         tonic = parts[0]
         mode = parts[1] if len(parts) > 1 else "major"
         
-        # Define scale patterns (in semitones)
         scale_patterns = {
             "major": [0, 2, 4, 5, 7, 9, 11],
             "minor": [0, 2, 3, 5, 7, 8, 10]
         }
         
         if mode not in scale_patterns:
-            mode = "major"  # Default fallback
+            mode = "major"
             
-        # Get tonic pitch class number
         tonic_pitch = abjad.NamedPitchClass(tonic)
         tonic_number = tonic_pitch.number()
         
-        # Build scale
         scale = []
         for interval in scale_patterns[mode]:
             pitch_number = (tonic_number + interval) % 12
@@ -409,19 +378,8 @@ class CanonGenerator:
     def transpose_pitch_by_scale_degrees(self, pitch: abjad.NamedPitch, scale_degrees: int) -> abjad.NamedPitch:
         """
         Transpose a pitch down by the specified number of diatonic scale degrees.
-        
-        Args:
-            pitch: Original pitch
-            scale_degrees: Number of scale degrees to transpose down (0=unison, 1=down one degree, etc.)
-            
-        Returns:
-            Transposed pitch within the key
         """
         try:
-            if self.debug:
-                print(f"  Transposing {pitch} down by {scale_degrees} scale degrees")
-                print(f"  Scale: {[pc.name() for pc in self.scale_pitches]}")
-            
             # Get the current pitch class
             current_pc = pitch.pitch_class()
             current_pc_name = current_pc.name()
@@ -429,8 +387,6 @@ class CanonGenerator:
             # Find the current position in the scale
             scale_names = [pc.name() for pc in self.scale_pitches]
             if current_pc_name not in scale_names:
-                if self.debug:
-                    print(f"  Warning: {current_pc_name} not in scale, using closest match")
                 # Find closest scale degree
                 current_number = current_pc.number()
                 closest_pc = min(self.scale_pitches, 
@@ -446,7 +402,6 @@ class CanonGenerator:
             new_pc = self.scale_pitches[new_scale_index]
             
             # Calculate octave adjustment
-            # If we wrapped around the scale going down, we need to go down an octave
             octave_adjustment = 0
             if scale_degrees > 0 and new_scale_index > current_scale_index:
                 octave_adjustment = -1
@@ -458,15 +413,12 @@ class CanonGenerator:
             
             # Calculate new octave
             if apostrophes > 0:
-                # Pitch is above middle C
                 new_octave_apostrophes = max(0, apostrophes + octave_adjustment)
                 new_commas = 0
             elif commas > 0:
-                # Pitch is below middle C
                 new_commas = max(0, commas - octave_adjustment)
                 new_octave_apostrophes = 0
             else:
-                # Pitch is around middle C
                 if octave_adjustment > 0:
                     new_octave_apostrophes = octave_adjustment
                     new_commas = 0
@@ -484,19 +436,11 @@ class CanonGenerator:
             elif new_commas > 0:
                 new_pitch_name += "," * new_commas
             
-            new_pitch = abjad.NamedPitch(new_pitch_name)
-            
-            if self.debug:
-                print(f"  Result: {new_pitch}")
-            
-            return new_pitch
+            return abjad.NamedPitch(new_pitch_name)
                 
         except Exception as e:
             if self.debug:
                 print(f"Transposition error: {e}")
-                import traceback
-                traceback.print_exc()
-            print(f"Scale degree transposition error for {pitch}, returning original")
             return pitch
     
     def extract_melody_notes(self) -> List[abjad.Note]:
@@ -504,115 +448,27 @@ class CanonGenerator:
         return [leaf for leaf in abjad.iterate.leaves(self.melody_staff) 
                 if isinstance(leaf, abjad.Note)]
     
-    def get_beat_strength(self, offset: Fraction) -> str:
+    def copy_melody_notes(self) -> List[abjad.Note]:
+        """Create fresh copies of melody notes to avoid parent conflicts."""
+        melody_notes = self.extract_melody_notes()
+        return [abjad.Note(note.written_pitch(), note.written_duration()) 
+                for note in melody_notes]
+    
+    def create_prolated_voice(self, prolation_factor: int, voice_number: int, 
+                            entry_delay: Fraction, canon_interval: int = 1) -> abjad.Staff:
         """
-        Determine beat strength at given offset based on template.
+        Create a voice with prolated durations and diatonic transposition.
         
         Args:
-            offset: Musical offset (in fractions of a whole note)
+            prolation_factor: Factor to multiply durations by
+            voice_number: Voice number (1, 2, or 3)
+            entry_delay: How long to wait before entering
+            canon_interval: Scale degree interval for this canon (1=unison, 2=second, etc.)
             
         Returns:
-            Beat strength: 'S' (strong), 'm' (medium), 'w' (weak)
-        """
-        beats_per_measure = self.time_signature.numerator
-        beat_duration = Fraction(1, self.time_signature.denominator)
-        
-        # Calculate position within measure
-        position_in_measure = offset % (beats_per_measure * beat_duration)
-        beat_number = int(position_in_measure / beat_duration)
-        
-        # Use template cyclically if needed
-        template_index = beat_number % len(self.beat_template)
-        return self.beat_template[template_index]
-        """
-        Determine beat strength at given offset based on template.
-        
-        Args:
-            offset: Musical offset (in fractions of a whole note)
-            
-        Returns:
-            Beat strength: 'S' (strong), 'm' (medium), 'w' (weak)
-        """
-        beats_per_measure = self.time_signature.numerator
-        beat_duration = Fraction(1, self.time_signature.denominator)
-        
-        # Calculate position within measure
-        position_in_measure = offset % (beats_per_measure * beat_duration)
-        beat_number = int(position_in_measure / beat_duration)
-        
-        # Use template cyclically if needed
-        template_index = beat_number % len(self.beat_template)
-        return self.beat_template[template_index]
-    
-    def calculate_interval(self, pitch1: abjad.NamedPitch, pitch2: abjad.NamedPitch) -> str:
-        """Calculate the interval between two pitches."""
-        try:
-            interval = abjad.NamedInterval.from_pitch_carriers(pitch1, pitch2)
-            return interval.name()
-        except:
-            # Fallback: use semitone calculation
-            semitones = abs(pitch1.number() - pitch2.number()) % 12
-            interval_map = {
-                0: 'P1', 1: 'm2', 2: 'M2', 3: 'm3', 4: 'M3', 5: 'P4',
-                6: 'TT', 7: 'P5', 8: 'm6', 9: 'M6', 10: 'm7', 11: 'M7'
-            }
-            return interval_map.get(semitones, 'unknown')
-    
-    def is_consonant(self, interval_name: str) -> bool:
-        """Check if an interval is consonant."""
-        # Primary check
-        if interval_name in self.consonant_intervals:
-            return True
-            
-        # Fallback: check by semitone class for compound intervals
-        semitone_map = {
-            'P1': 0, 'm2': 1, 'M2': 2, 'm3': 3, 'M3': 4, 'P4': 5,
-            'TT': 6, 'P5': 7, 'm6': 8, 'M6': 9, 'm7': 10, 'M7': 11
-        }
-        
-        if interval_name in semitone_map:
-            semitones = semitone_map[interval_name]
-            return semitones in self.consonant_interval_classes
-            
-        return False
-    
-    def create_canon_voice(self, melody_notes: List[abjad.Note], 
-                          entry_delay: Fraction, voice_number: int = 1, 
-                          voice_name: str = None, max_delay_used: Fraction = None,
-                          canon_interval: int = 1, prolation: int = 1) -> abjad.Staff:
-        """
-        Create a canon voice with specified entry delay, interval transposition, and prolation.
-        
-        Args:
-            melody_notes: List of melody notes
-            entry_delay: Delay before voice enters (in whole note fractions)
-            voice_number: Which voice this is (1=original, 2=first transposition, 3=second transposition)
-            voice_name: Name for the staff
-            max_delay_used: The actual maximum delay being used in this canon
-            canon_interval: Scale degree interval for this canon
-            prolation: Duration multiplier for this voice (1=normal, 2=double, etc.)
-            
-        Returns:
-            Abjad Staff containing the canon voice
+            Abjad Staff with the prolated and transposed voice
         """
         components = []
-        
-        # Calculate total duration needed with prolation considerations
-        melody_duration = sum(note.written_duration() for note in melody_notes)
-        
-        if max_delay_used is not None:
-            # For prolation canons, we need to account for the longest voice duration
-            # Voice 3 with prolation^2 will take the longest
-            max_prolation_multiplier = prolation ** (voice_number - 1)
-            total_duration_needed = max_delay_used + (melody_duration * max_prolation_multiplier)
-        else:
-            # Fallback: use current voice's requirement
-            voice_prolation_multiplier = prolation ** (voice_number - 1)
-            total_duration_needed = entry_delay + (melody_duration * voice_prolation_multiplier)
-        
-        if self.debug:
-            voice_prolation = prolation ** (voice_number - 1)
-            print(f"  Voice {voice_number}: prolation={voice_prolation}x, entry_delay={entry_delay}, total_needed={total_duration_needed}")
         
         # Add rests for entry delay
         if entry_delay > 0:
@@ -631,550 +487,264 @@ class CanonGenerator:
                     components.append(abjad.Rest('r8'))
                     remaining_delay -= Fraction(1, 8)
         
-        # Calculate how much music we need after the entry delay
-        remaining_duration = total_duration_needed - entry_delay
-        current_duration = Fraction(0)
+        # Copy and transform melody notes
+        melody_notes = self.copy_melody_notes()
         
-        if self.debug:
-            print(f"  Voice {voice_number}: needs {remaining_duration} duration of music")
+        # Collect pitches and durations for make_notes
+        pitches = []
+        durations = []
         
-        # Add melody notes with prolation, repeating as necessary
-        repetition_count = 0
-        voice_prolation_multiplier = prolation ** (voice_number - 1)
-        
-        while current_duration < remaining_duration:
-            repetition_count += 1
-            if self.debug and repetition_count > 1:
-                print(f"  Voice {voice_number}: starting repetition {repetition_count}")
+        for note in melody_notes:
+            # Apply prolation to duration
+            new_duration = note.written_duration() * prolation_factor
             
-            # Collect pitches and durations for this repetition
-            pitches = []
-            durations = []
+            # Apply diatonic transposition based on voice number and canon interval
+            new_pitch = note.written_pitch()
+            if voice_number == 2:
+                # Voice 2: transpose down by (canon_interval - 1) scale degrees
+                scale_degrees_down = canon_interval - 1
+                new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
+            elif voice_number == 3:
+                # Voice 3: transpose down by 2 * (canon_interval - 1) scale degrees
+                scale_degrees_down = 2 * (canon_interval - 1)
+                new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
             
-            for note in melody_notes:
-                if current_duration >= remaining_duration:
-                    break
-                    
-                original_pitch = note.written_pitch()
-                new_pitch = original_pitch
-                
-                # Apply scale degree transpositions based on voice number
-                if voice_number == 2:
-                    scale_degrees_down = canon_interval - 1
-                    new_pitch = self.transpose_pitch_by_scale_degrees(original_pitch, scale_degrees_down)
-                elif voice_number == 3:
-                    scale_degrees_down = 2 * (canon_interval - 1)
-                    new_pitch = self.transpose_pitch_by_scale_degrees(original_pitch, scale_degrees_down)
-                
-                # Apply prolation to duration
-                original_duration = note.written_duration()
-                prolated_duration = original_duration * voice_prolation_multiplier
-                
-                pitches.append(new_pitch)
-                durations.append(prolated_duration)
-                current_duration += prolated_duration
-            
-            # Use make_notes to handle complex durations properly
-            if pitches and durations:
-                new_notes = abjad.makers.make_notes(pitches, durations)
-                components.extend(new_notes)
+            pitches.append(new_pitch)
+            durations.append(new_duration)
         
-        if self.debug:
-            print(f"  Voice {voice_number}: created {repetition_count} repetitions with {voice_prolation_multiplier}x prolation")
+        # Use make_notes to handle complex durations properly
+        if pitches and durations:
+            prolated_notes = abjad.makers.make_notes(pitches, durations)
+            components.extend(prolated_notes)
         
-        # Create staff with name during construction
-        staff = abjad.Staff(components, name=voice_name)
+        # Create staff
+        staff_name = f"Voice {voice_number}"
+        staff = abjad.Staff(components, name=staff_name)
         
-        # Apply meter boundaries to split notes at barlines
+        # Apply meter boundaries
         self.apply_meter_boundaries(staff)
         
         return staff
     
-    def evaluate_canon_score(self, voice1_staff: abjad.Staff, voice2_staff: abjad.Staff, 
-                           voice3_staff: abjad.Staff) -> float:
-        """
-        Evaluate the quality of a three-voice canon based on consonance on strong beats.
-        
-        Returns:
-            Score (higher is better): weighted sum of consonances on strong/medium/weak beats
-        """
-        # Create temporary score for analysis
-        score = abjad.Score([voice1_staff, voice2_staff, voice3_staff])
-        
-        total_score = 0.0
-        moment_count = 0
-        strong_beat_consonances = 0
-        strong_beat_moments = 0
-        interval_analysis = []
-        
-        # Analyze each vertical moment
-        for moment in abjad.iterate_vertical_moments(score):
-            leaves = moment.leaves()
-            if len(leaves) < 2:
-                continue
-                
-            moment_count += 1
-            beat_strength = self.get_beat_strength(moment.offset())
-            
-            # Calculate all pairwise intervals at this moment
-            moment_consonances = 0
-            moment_pairs = 0
-            moment_intervals = []
-            
-            for i, leaf1 in enumerate(leaves):
-                for leaf2 in leaves[i+1:]:
-                    if isinstance(leaf1, abjad.Note) and isinstance(leaf2, abjad.Note):
-                        interval = self.calculate_interval(leaf1.written_pitch(), 
-                                                         leaf2.written_pitch())
-                        moment_pairs += 1
-                        is_cons = self.is_consonant(interval)
-                        moment_intervals.append((leaf1.written_pitch(), leaf2.written_pitch(), interval, is_cons))
-                        
-                        if is_cons:
-                            moment_consonances += 1
-            
-            # Store analysis for debugging
-            interval_analysis.append({
-                'offset': moment.offset(),
-                'beat_strength': beat_strength,
-                'intervals': moment_intervals,
-                'consonances': moment_consonances,
-                'pairs': moment_pairs
-            })
-            
-            # Weight consonances based on beat strength
-            if moment_pairs > 0:
-                consonance_ratio = moment_consonances / moment_pairs
-                
-                if beat_strength == 'S':
-                    total_score += consonance_ratio * 5.0  # Strong beats weighted very heavily
-                    strong_beat_consonances += moment_consonances
-                    strong_beat_moments += moment_pairs
-                elif beat_strength == 'm':
-                    total_score += consonance_ratio * 2.0  # Medium beats moderately weighted
-                else:  # weak beats
-                    total_score += consonance_ratio * 1.0  # Weak beats now counted positively
-        
-        # Add bonus for overall strong beat consonance
-        if strong_beat_moments > 0:
-            strong_beat_ratio = strong_beat_consonances / strong_beat_moments
-            total_score += strong_beat_ratio * 10.0  # Big bonus for strong beat consonance
-        
-        # Normalize by moment count
-        final_score = total_score / max(moment_count, 1)
-        
-        # Debug output for interval analysis
-        if self.debug:
-            print(f"    === Interval Analysis ===")
-            for analysis in interval_analysis[:6]:  # Show first 6 moments
-                offset = analysis['offset']
-                beat = analysis['beat_strength']
-                intervals = analysis['intervals']
-                cons = analysis['consonances']
-                pairs = analysis['pairs']
-                print(f"    Offset {offset} ({beat} beat): {cons}/{pairs} consonant")
-                for p1, p2, interval, is_cons in intervals:
-                    status = "CONS" if is_cons else "DISS"
-                    print(f"      {p1} - {p2}: {interval} ({status})")
-            if len(interval_analysis) > 6:
-                print(f"    ... and {len(interval_analysis) - 6} more moments")
-            print(f"    Strong beat consonance: {strong_beat_consonances}/{strong_beat_moments}")
-            
-        return final_score
-    
-    def generate_entry_delays(self) -> List[Fraction]:
-        """Generate all possible entry delays based on the specified resolution."""
-        delays = []
-        beat_duration = Fraction(1, self.time_signature.denominator)
-        max_delay_duration = self.max_entry_delay * self.time_signature.numerator * beat_duration
-        
-        if self.entry_resolution == "downbeat":
-            # Only allow entries on measure boundaries (downbeats)
-            measure_duration = self.time_signature.numerator * beat_duration
-            current_delay = Fraction(0)
-            while current_delay <= max_delay_duration:
-                delays.append(current_delay)
-                current_delay += measure_duration
-                
-        elif self.entry_resolution == "strong_beat":
-            # Only allow entries on beats marked as 'S' in the beat template
-            current_delay = Fraction(0)
-            while current_delay <= max_delay_duration:
-                # Check if this delay corresponds to a strong beat
-                beat_strength = self.judge.get_beat_strength(current_delay)
-                if beat_strength == 'S':
-                    delays.append(current_delay)
-                current_delay += beat_duration
-                
-        elif self.entry_resolution == "beat":
-            # Allow entries on any beat boundary (default)
-            current_delay = Fraction(0)
-            while current_delay <= max_delay_duration:
-                delays.append(current_delay)
-                current_delay += beat_duration
-                
-        elif self.entry_resolution == "half_beat":
-            # Allow entries on beat and half-beat boundaries
-            half_beat_duration = beat_duration / 2
-            current_delay = Fraction(0)
-            while current_delay <= max_delay_duration:
-                delays.append(current_delay)
-                current_delay += half_beat_duration
-                
-        elif self.entry_resolution == "quarter_beat":
-            # Allow entries on quarter-beat boundaries (finest resolution)
-            quarter_beat_duration = beat_duration / 4
-            current_delay = Fraction(0)
-            while current_delay <= max_delay_duration:
-                delays.append(current_delay)
-                current_delay += quarter_beat_duration
-        else:
-            # Default to beat resolution if unknown option
-            current_delay = Fraction(0)
-            while current_delay <= max_delay_duration:
-                delays.append(current_delay)
-                current_delay += beat_duration
-        
-        return delays
-    
-    def add_analysis_markup_to_score(self, final_score: abjad.Score) -> None:
-        """
-        Add consonance analysis by coloring noteheads.
-        
-        Color scheme:
-        - Green: Consonant on strong beat (good!)
-        - Red: Dissonant on strong beat (bad!)
-        - Blue: Consonant on medium/weak beat
-        - Gray: Dissonant on medium/weak beat (acceptable)
-        """
-        if not self.add_analysis_markup:
-            return
-            
-        # Analyze each vertical moment and color noteheads
-        for moment in abjad.iterate_vertical_moments(final_score):
-            leaves = moment.leaves()
-            if len(leaves) < 2:
-                continue
-                
-            beat_strength = self.judge.get_beat_strength(moment.offset())
-            
-            # Calculate consonance ratio for this moment
-            consonance_count = 0
-            total_intervals = 0
-            
-            for i, leaf1 in enumerate(leaves):
-                for leaf2 in leaves[i+1:]:
-                    if isinstance(leaf1, abjad.Note) and isinstance(leaf2, abjad.Note):
-                        interval = self.judge.calculate_interval(leaf1.written_pitch(), 
-                                                               leaf2.written_pitch())
-                        is_cons = self.judge.is_consonant(interval)
-                        total_intervals += 1
-                        if is_cons:
-                            consonance_count += 1
-            
-            # Determine color based on consonance and beat strength
-            if total_intervals > 0:
-                consonance_ratio = consonance_count / total_intervals
-                is_mostly_consonant = consonance_ratio >= 0.5
-                
-                if beat_strength == 'S':
-                    if is_mostly_consonant:
-                        color = "#(rgb-color 0 0.7 0)"      # Good: consonant on strong beat
-                    else:
-                        color = "#(rgb-color 0.8 0 0)"        # Bad: dissonant on strong beat
-                elif beat_strength == 'm':
-                    if is_mostly_consonant:
-                        color = "#(rgb-color 0 0 0.8)"       # Consonant on medium beat
-                    else:
-                        color = "#(rgb-color 0.5 0.5 0.5)"       # Dissonant on medium beat
-                else:  # weak beat
-                    if is_mostly_consonant:
-                        color = "#(rgb-color 0 0 0.8)"       # Consonant on weak beat
-                    else:
-                        color = "#(rgb-color 0.5 0.5 0.5)"       # Dissonant on weak beat (fine)
-                
-                # Color all noteheads at this moment
-                for leaf in leaves:
-                    if isinstance(leaf, abjad.Note):
-                        abjad.override(leaf).NoteHead.color = color
-    def copy_melody_notes(self) -> List[abjad.Note]:
-        """Create fresh copies of melody notes to avoid parent conflicts."""
-        melody_notes = self.extract_melody_notes()
-        return [abjad.Note(note.written_pitch(), note.written_duration()) 
-                for note in melody_notes]
-    
     def apply_meter_boundaries(self, staff: abjad.Staff) -> None:
-        """
-        Split notes at meter boundaries and add ties as needed.
-        """
-        # First, ensure we have a time signature attached
-        time_sig_found = False
-        for leaf in abjad.iterate.leaves(staff):
-            indicators = abjad.get.indicators(leaf, abjad.TimeSignature)
-            if indicators:
-                time_sig_found = True
-                break
-        
-        if not time_sig_found and len(staff) > 0:
-            # Attach time signature to first leaf if not present
-            abjad.attach(self.time_signature, staff[0])
-        
+        """Split notes at meter boundaries and add ties as needed."""
         # Use Abjad's meter to split notes at measure boundaries
+        # Note: Time signature should be attached elsewhere, not here
         try:
-            # Apply meter to the staff - this splits long notes at barlines
             abjad.Meter.rewrite_meter(staff, self.time_signature)
         except Exception as e:
             if self.debug:
-                print(f"    Warning: Could not apply meter rewriting: {e}")
-            # Fallback: manually split long durations if automatic rewriting fails
-            self._manual_meter_split(staff)
+                print(f"Warning: Could not apply meter rewriting: {e}")
     
-    def _manual_meter_split(self, staff: abjad.Staff) -> None:
+    def calculate_entry_delays(self, prolation_factor: int) -> Tuple[Fraction, Fraction, Fraction]:
         """
-        Manually split notes that cross barlines - fallback method.
-        """
-        measure_duration = Fraction(self.time_signature.numerator, self.time_signature.denominator)
-        current_position = Fraction(0)
+        Calculate entry delays for each voice based on the simplified timing scheme.
         
-        # Convert staff to a list to allow modification during iteration
-        leaves = list(abjad.iterate.leaves(staff))
-        
-        for leaf in leaves:
-            if isinstance(leaf, abjad.Note):
-                note_duration = leaf.written_duration()
-                note_end = current_position + note_duration
-                
-                # Check if note crosses a barline
-                current_measure_end = ((current_position // measure_duration) + 1) * measure_duration
-                
-                if note_end > current_measure_end and current_position < current_measure_end:
-                    # Note crosses barline, needs to be split
-                    try:
-                        # Duration before barline
-                        first_duration = current_measure_end - current_position
-                        # Duration after barline  
-                        second_duration = note_end - current_measure_end
-                        
-                        if first_duration > 0 and second_duration > 0:
-                            # Create two tied notes
-                            first_note = abjad.Note(leaf.written_pitch(), first_duration)
-                            second_note = abjad.Note(leaf.written_pitch(), second_duration)
-                            
-                            # Add tie
-                            abjad.tie([first_note, second_note])
-                            
-                            # Replace the original note
-                            leaf_index = staff.index(leaf)
-                            staff.pop(leaf_index)
-                            staff.insert(leaf_index, first_note)
-                            staff.insert(leaf_index + 1, second_note)
-                    except:
-                        # If splitting fails, leave the note as is
-                        pass
+        Args:
+            prolation_factor: The prolation factor being tested
             
-            current_position += leaf.written_duration()
-        melody_notes = self.extract_melody_notes()
-        return [abjad.Note(note.written_pitch(), note.written_duration()) 
-                for note in melody_notes]
-    
-    def find_optimal_canon(self) -> abjad.Score:
+        Returns:
+            Tuple of (voice1_delay, voice2_delay, voice3_delay)
         """
-        Search for the optimal three-voice canon configuration.
-        Tests all combinations of prolations, canon intervals, and entry delays.
+        # Voice 1: starts immediately
+        voice1_delay = Fraction(0)
+        
+        # Voice 2: enters after Voice 1 completes one full statement
+        voice2_delay = self.original_melody_duration
+        
+        # Voice 3: enters after Voice 2 completes one full statement
+        # Voice 2's duration is original_duration * prolation_factor
+        voice3_delay = voice2_delay + (self.original_melody_duration * prolation_factor)
+        
+        return voice1_delay, voice2_delay, voice3_delay
+    
+    def find_optimal_canon(self) -> Tuple[abjad.Score, int, int, float]:
+        """
+        Search for the optimal prolation factor and canon interval combination.
         
         Returns:
-            Abjad Score with optimally-spaced canon voices
+            Tuple of (best_score, best_prolation_factor, best_canon_interval, best_score_value)
         """
-        possible_delays = self.generate_entry_delays()
+        best_score = float('-inf')
+        best_prolation_factor = self.min_prolation
+        best_canon_interval = 1
+        best_canon_score = None
         
-        best_score = float('-inf')  # Start with negative infinity so any score will be better
-        best_configuration = None
-        
-        total_configurations = len(self.search_prolations) * len(self.search_intervals) * len(possible_delays) ** 2
-        print(f"Searching {len(self.search_prolations)} prolations × {len(self.search_intervals)} intervals × {len(possible_delays)}² delays = {total_configurations} configurations...")
-        print(f"Prolation Canon Interval Voice 2 Delay Voice 3 Delay Consonance Score")
+        total_combinations = (self.max_prolation - self.min_prolation + 1) * len(self.search_intervals)
+        print(f"Searching {self.max_prolation - self.min_prolation + 1} prolation factors × {len(self.search_intervals)} canon intervals = {total_combinations} combinations...")
+        print("Prolation | Canon Interval | Voice 2 Timing | Voice 3 Timing | Consonance Score")
         print("-" * 80)
         
-        # Search all combinations of prolations, canon intervals, and entry delays
-        for prolation in self.search_prolations:
+        for prolation in range(self.min_prolation, self.max_prolation + 1):
             for canon_interval in self.search_intervals:
-                for delay2, delay3 in itertools.product(possible_delays, repeat=2):
-                    # Skip identical delays (voices would be in unison)
-                    if delay2 == delay3:
-                        continue
-                        
-                    # Find the maximum delay for this configuration
-                    max_delay_in_config = max(Fraction(0), delay2, delay3)
-                        
-                    # Create three canon voices with prolation, interval transpositions
-                    voice1 = self.create_canon_voice(self.copy_melody_notes(), Fraction(0), 
-                                                   voice_number=1, voice_name="Voice 1",
-                                                   max_delay_used=max_delay_in_config,
-                                                   canon_interval=canon_interval,
-                                                   prolation=prolation)
-                    voice2 = self.create_canon_voice(self.copy_melody_notes(), delay2, 
-                                                   voice_number=2, voice_name="Voice 2",
-                                                   max_delay_used=max_delay_in_config,
-                                                   canon_interval=canon_interval,
-                                                   prolation=prolation)
-                    voice3 = self.create_canon_voice(self.copy_melody_notes(), delay3, 
-                                                   voice_number=3, voice_name="Voice 3",
-                                                   max_delay_used=max_delay_in_config,
-                                                   canon_interval=canon_interval,
-                                                   prolation=prolation)
-                    
-                    # Evaluate this configuration using the judge
-                    temp_score = abjad.Score([voice1, voice2, voice3])
-                    score = self.judge.evaluate_score(temp_score)
-                    
-                    # Print score for this configuration
-                    print(f"{prolation:<9} {canon_interval:<13} {str(delay2):<12} {str(delay3):<12} {score:<16.3f}")
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_configuration = (prolation, canon_interval, delay2, delay3)
-                        print(f"                                                           ^^^ NEW BEST! ^^^")
+                # Calculate entry delays for this prolation
+                v1_delay, v2_delay, v3_delay = self.calculate_entry_delays(prolation)
+                
+                if self.debug:
+                    print(f"\nTesting prolation {prolation}, canon interval {canon_interval}:")
+                    print(f"  Voice 1: delay={v1_delay}, prolation=1x, no transposition")
+                    print(f"  Voice 2: delay={v2_delay}, prolation={prolation}x, down {canon_interval-1} degrees")
+                    print(f"  Voice 3: delay={v3_delay}, prolation={prolation**2}x, down {2*(canon_interval-1)} degrees")
+                
+                # Create voices with this prolation and canon interval
+                voice1 = self.create_prolated_voice(1, 1, v1_delay, canon_interval)
+                voice2 = self.create_prolated_voice(prolation, 2, v2_delay, canon_interval)
+                voice3 = self.create_prolated_voice(prolation**2, 3, v3_delay, canon_interval)
+                
+                # Create temporary score and evaluate
+                temp_score = abjad.Score([voice1, voice2, voice3])
+                score = self.judge.evaluate_score(temp_score)
+                
+                # Display results
+                interval_name = self._get_interval_name(canon_interval)
+                print(f"{prolation:>9} | {interval_name:>13} | {str(v2_delay):>13} | {str(v3_delay):>13} | {score:>15.3f}")
+                
+                # Track best score
+                if score > best_score:
+                    best_score = score
+                    best_prolation_factor = prolation
+                    best_canon_interval = canon_interval
+                    best_canon_score = temp_score
+                    print(f"                                                                      ^^^ NEW BEST! ^^^")
         
-        # Create the optimal canon
-        if best_configuration:
-            prolation, canon_interval, delay2, delay3 = best_configuration
-            print(f"\nOptimal configuration found:")
-            print(f"Prolation: {prolation} (Voice 2: {prolation}x, Voice 3: {prolation**2}x durations)")
-            print(f"Canon interval: {canon_interval} (1=unison, 2=second, 3=third, etc.)")
-            print(f"Voice 1: Original melody")
-            print(f"Voice 2: Entry delay {delay2}, {prolation}x durations, transposed down by {canon_interval - 1} scale degrees")
-            print(f"Voice 3: Entry delay {delay3}, {prolation**2}x durations, transposed down by {2 * (canon_interval - 1)} scale degrees")
-            print(f"Key: {self.key}")
-            print(f"Consonance score: {best_score:.3f}")
-            
-            # Build final score with fresh copies
-            max_delay_final = max(Fraction(0), delay2, delay3)
-            voice1 = self.create_canon_voice(self.copy_melody_notes(), Fraction(0), 
-                                           voice_number=1, voice_name="Voice 1",
-                                           max_delay_used=max_delay_final,
-                                           canon_interval=canon_interval,
-                                           prolation=prolation)
-            voice2 = self.create_canon_voice(self.copy_melody_notes(), delay2, 
-                                           voice_number=2, voice_name="Voice 2",
-                                           max_delay_used=max_delay_final,
-                                           canon_interval=canon_interval,
-                                           prolation=prolation)
-            voice3 = self.create_canon_voice(self.copy_melody_notes(), delay3, 
-                                           voice_number=3, voice_name="Voice 3",
-                                           max_delay_used=max_delay_final,
-                                           canon_interval=canon_interval,
-                                           prolation=prolation)
-            
-            # Set appropriate clefs
-            abjad.attach(abjad.Clef('treble'), voice1[0])
-            abjad.attach(abjad.Clef('treble'), voice2[0])
-            abjad.attach(abjad.Clef('bass'), voice3[0])
-            
-            # Add time signature to first voice
-            abjad.attach(self.time_signature, voice1[0])
-            
-            # Create the final score
-            final_score = abjad.Score([voice1, voice2, voice3], name="Three-Voice Prolation Canon")
-            
-            # Add analysis markup AFTER creating the final score
-            self.add_analysis_markup_to_score(final_score)
-            
-            return final_score
-        else:
+        return best_canon_score, best_prolation_factor, best_canon_interval, best_score
+    
+    def _get_interval_name(self, canon_interval: int) -> str:
+        """Convert canon interval number to name."""
+        interval_names = {
+            1: "Unison", 2: "Second", 3: "Third", 4: "Fourth", 
+            5: "Fifth", 6: "Sixth", 7: "Seventh", 8: "Octave"
+        }
+        return interval_names.get(canon_interval, f"{canon_interval}th")
+    
+    def generate_canon(self) -> abjad.Score:
+        """
+        Generate the optimal prolation canon.
+        
+        Returns:
+            Abjad Score with the optimal three-voice prolation canon
+        """
+        # Find optimal prolation and canon interval
+        best_score, best_prolation, best_canon_interval, best_score_value = self.find_optimal_canon()
+        
+        if best_score is None:
             print("No valid canon configuration found!")
             return None
-
-def save_score_to_file(score: abjad.Score, filename: str = "canon_output.ly") -> str:
-    """
-    Save an Abjad score to a LilyPond file with proper headers.
-    
-    Args:
-        score: Abjad Score object to save
-        filename: Name of the output file (should end with .ly)
         
-    Returns:
-        Full path to the saved file
-    """
+        # Display optimal configuration
+        v1_delay, v2_delay, v3_delay = self.calculate_entry_delays(best_prolation)
+        interval_name = self._get_interval_name(best_canon_interval)
+        
+        print(f"\nOptimal prolation canon found:")
+        print(f"Prolation factor: {best_prolation}")
+        print(f"Canon interval: {interval_name} (interval {best_canon_interval})")
+        print(f"Voice 1: Original melody, starts immediately, no transposition")
+        print(f"Voice 2: {best_prolation}x durations, enters at {v2_delay}, transposed down {best_canon_interval-1} scale degrees")
+        print(f"Voice 3: {best_prolation**2}x durations, enters at {v3_delay}, transposed down {2*(best_canon_interval-1)} scale degrees")
+        print(f"Key: {self.key}")
+        print(f"Consonance score: {best_score_value:.3f}")
+        
+        # Create final score with proper formatting
+        voice1 = self.create_prolated_voice(1, 1, v1_delay, best_canon_interval)
+        voice2 = self.create_prolated_voice(best_prolation, 2, v2_delay, best_canon_interval)
+        voice3 = self.create_prolated_voice(best_prolation**2, 3, v3_delay, best_canon_interval)
+        
+        # Set appropriate clefs and time signature
+        abjad.attach(abjad.Clef('treble'), voice1[0])
+        abjad.attach(abjad.Clef('treble'), voice2[0])
+        abjad.attach(abjad.Clef('bass'), voice3[0])
+        
+        # Attach time signature only to the very first note of the score
+        first_leaf = abjad.get.leaf(voice1, 0)
+        abjad.attach(self.time_signature, first_leaf)
+        
+        # Create final score
+        final_score = abjad.Score([voice1, voice2, voice3], name="Three-Voice Prolation Canon")
+        
+        return final_score
+
+def save_score_to_file(score: abjad.Score, filename: str = "simplified_canon.ly") -> str:
+    """Save an Abjad score to a LilyPond file with proper headers."""
     import os
     
-    # Ensure filename has .ly extension
     if not filename.endswith('.ly'):
         filename += '.ly'
     
-    # Get the current working directory
     output_path = os.path.join(os.getcwd(), filename)
     
-    # Generate LilyPond content with proper structure
     lilypond_content = f'''\\version "2.24.0"
 \\language "english"
 
 \\header {{
-  title = "Three-Voice Canon"
-  composer = "Generated by Abjad"
+  title = "Three-Voice Prolation Canon"
+  subtitle = "Generated by Simplified Canon Generator"
+  composer = "Abjad"
 }}
 
 {abjad.lilypond(score)}
 '''
     
-    # Write to file
     with open(output_path, 'w') as f:
         f.write(lilypond_content)
     
     return output_path
 
 def create_sample_melody() -> abjad.Staff:
-    """Create the complete Frère Jacques melody - a classic canon with clear phrase structure."""
-    # Complete Frère Jacques (Brother John) - a traditional canon with varied rhythms
-    # First half: Frère Jacques, Frère Jacques
-    # Second half: Dormez-vous? Dormez-vous?
-    # Third part: Sonnez les matines, Sonnez les matines  
-    # Fourth part: Din dan don, Din dan don
-    melody = abjad.Staff("c'4 d'4 e'4 c'4 c'4 d'4 e'4 c'4 e'4 f'4 g'2 e'4 f'4 g'2 g'8 a'8 g'8 f'8 e'4 c'4 g'8 a'8 g'8 f'8 e'4 c'4 c'4 g4 c'2 c'4 g4 c'2")
-    print("Sample melody (Complete Frère Jacques):")
-    for i, note in enumerate(melody):
-        if isinstance(note, abjad.Note):
-            print(f"  Note {i}: {note.written_pitch()}")
+    """Create the traditional Korean folk song Arirang."""
+    # Traditional Korean folk song Arirang - beautiful melody perfect for canon testing
+    arirang_lilypond = "e'4.( fs'8 e'4 a'4. b'8 a' b' cs''4 b'8 cs''16 b' a'8 fs' e'4.) fs'8( e' fs' a'4. b'8 a' b' cs'' b' a' fs' e' fs' a'4. b'8 a'4 a'2.) e''2( e''4 e'' cs'' b' cs'' b'8 cs''16 b' a'8 fs' e'4.) fs'8( e' fs' a'4. b'8 a' b' cs'' b' a' fs' e' fs' a'4. b'8 a'4 a'2.)"
+    
+    melody = abjad.Staff(arirang_lilypond)
+    print("Sample melody (Traditional Korean folk song - Arirang):")
+    note_count = 0
+    for leaf in abjad.iterate.leaves(melody):
+        if isinstance(leaf, abjad.Note):
+            note_count += 1
+            if note_count <= 10:  # Show first 10 notes
+                print(f"  Note {note_count}: {leaf.written_pitch()} - {leaf.written_duration()}")
+    
+    if note_count > 10:
+        print(f"  ... and {note_count - 10} more notes")
+    
+    print(f"Total melody duration: {sum(note.written_duration() for note in abjad.iterate.leaves(melody) if isinstance(note, abjad.Note))}")
     return melody
 
 # Example usage
 if __name__ == "__main__":
     # Create sample inputs
     melody_staff = create_sample_melody()
-    time_signature = abjad.TimeSignature((4, 4))
-    beat_template = ['S', 'w', 'm', 'w']  # Strong, weak, medium, weak
+    time_signature = abjad.TimeSignature((3, 4))  # Arirang is in 3/4 time
     
-    # Create a custom rubric that penalizes unisons heavily
+    # Create a custom rubric
     custom_rubric = Rubric(
         strong_beat_consonance=5.0,
         medium_beat_consonance=2.0, 
         weak_beat_consonance=1.0,
-        strong_beat_unison_penalty=-3.0,  # Heavy penalty for unisons on strong beats
+        strong_beat_unison_penalty=-3.0,
         medium_beat_unison_penalty=-1.5,
         weak_beat_unison_penalty=-0.5,
-        strong_beat_dissonance_penalty=-2.0,  # Penalty for dissonance on strong beats
+        strong_beat_dissonance_penalty=-2.0,
         medium_beat_dissonance_penalty=-0.5,
-        weak_beat_dissonance_penalty=0.0,  # No penalty for weak beat dissonance
+        weak_beat_dissonance_penalty=0.0,
         overall_consonance_bonus=10.0
     )
     
-    # Create judge with custom rubric
-    judge = Judge(custom_rubric, beat_template, time_signature, debug=False)
+    # Create judge with custom rubric (no beat_template needed - uses Abjad's Meter)
+    judge = Judge(rubric=custom_rubric, time_signature=time_signature, debug=False)
     
-    # Generate canon with optimal prolation, interval, and entry search
-    generator = CanonGenerator(
+    # Generate simplified canon
+    generator = SimplifiedCanonGenerator(
         melody_staff, 
-        time_signature, 
-        beat_template, 
+        time_signature,
         key="c major",
-        max_entry_delay_measures=2,  # Increase to 2 measures for more options
-        debug=False,  # Disable debug for cleaner output
-        add_analysis_markup=True,  # Add interval analysis to the score
-        judge=judge,  # Use custom judge
-        search_intervals=[1, 3, 4, 5, 6],  # Skip 2nd and 7th (often dissonant)
-        entry_resolution="strong_beat",  # Only allow entries on strong beats
-        search_prolations=[1, 2, 3]  # Search normal, double, and triple prolation
+        min_prolation=2,
+        max_prolation=4,  # Search prolation factors 2, 3, 4
+        search_intervals=[2, 3, 4, 5, 6],  # Skip unison and 7th (avoid unison, 7th often dissonant)
+        debug=False,
+        judge=judge
     )
-    canon_score = generator.find_optimal_canon()
+    
+    canon_score = generator.generate_canon()
     
     if canon_score:
         # Display the result
@@ -1182,7 +752,7 @@ if __name__ == "__main__":
         print(abjad.lilypond(canon_score))
         
         # Save to file
-        output_file = save_score_to_file(canon_score, "three_voice_canon.ly")
+        output_file = save_score_to_file(canon_score, "simplified_prolation_canon.ly")
         print(f"\nScore saved to: {output_file}")
     else:
         print("Failed to generate canon.")
