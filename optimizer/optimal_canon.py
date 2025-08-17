@@ -375,16 +375,18 @@ class SimplifiedCanonGenerator:
             
         return scale
     
-    def transpose_pitch_by_scale_degrees(self, pitch: abjad.NamedPitch, scale_degrees: int) -> abjad.NamedPitch:
+    def transpose_pitch_by_scale_degrees(self, pitch: abjad.NamedPitch, scale_degrees: int, 
+                                        mode: str = "tonal") -> abjad.NamedPitch:
         """
         Transpose a pitch down by the specified number of diatonic scale degrees.
         
         Args:
             pitch: Original pitch
             scale_degrees: Number of scale degrees to transpose down (0=unison, 1=down one degree, etc.)
+            mode: "real" for exact intervals, "tonal" to force result into the specified key
             
         Returns:
-            Transposed pitch within the key
+            Transposed pitch
         """
         if scale_degrees == 0:
             return pitch
@@ -429,8 +431,18 @@ class SimplifiedCanonGenerator:
             # Apply transposition
             abjad.mutate.transpose(temp_note, interval)
             
-            # Return the transposed pitch
-            return temp_note.written_pitch()
+            # Get the transposed pitch
+            transposed_pitch = temp_note.written_pitch()
+            
+            # Handle different transposition modes
+            if mode == "real":
+                # Return exact transposition (may not be in key)
+                return transposed_pitch
+            elif mode == "tonal":
+                # Force result into the specified key
+                return self._force_pitch_to_key(transposed_pitch)
+            else:
+                raise ValueError(f"Unknown transposition mode: {mode}")
                 
         except Exception as e:
             if self.debug:
@@ -438,6 +450,58 @@ class SimplifiedCanonGenerator:
                 import traceback
                 traceback.print_exc()
             print(f"Scale degree transposition error for {pitch}, returning original")
+            return pitch
+    
+    def _force_pitch_to_key(self, pitch: abjad.NamedPitch) -> abjad.NamedPitch:
+        """
+        Force a pitch to be within the specified key by finding the closest scale degree.
+        
+        Args:
+            pitch: Pitch to force into key
+            
+        Returns:
+            Pitch within the key, preserving octave
+        """
+        try:
+            # Get pitch class and find closest scale degree
+            current_pc = pitch.pitch_class()
+            current_pc_number = current_pc.number()
+            
+            scale_pc_numbers = [pc.number() for pc in self.scale_pitches]
+            
+            # Find closest scale degree
+            closest_distance = float('inf')
+            closest_pc = self.scale_pitches[0]
+            
+            for scale_pc in self.scale_pitches:
+                scale_pc_number = scale_pc.number()
+                distance = min(abs(scale_pc_number - current_pc_number),
+                             abs(scale_pc_number - current_pc_number + 12),
+                             abs(scale_pc_number - current_pc_number - 12))
+                if distance < closest_distance:
+                    closest_distance = distance
+                    closest_pc = scale_pc
+            
+            # If already in key, return as is
+            if closest_distance == 0:
+                return pitch
+            
+            # Get octave from original pitch
+            original_pitch_number = pitch.number()
+            original_octave = original_pitch_number // 12
+            
+            # Create new pitch with closest scale degree in same octave
+            new_pitch_number = original_octave * 12 + closest_pc.number()
+            new_pitch = abjad.NamedPitch(new_pitch_number)
+            
+            if self.debug:
+                print(f"  Forced {pitch} to key: {new_pitch}")
+            
+            return new_pitch
+            
+        except Exception as e:
+            if self.debug:
+                print(f"Error forcing pitch {pitch} to key: {e}")
             return pitch
     
     def extract_melody_notes(self) -> List[abjad.Note]:
@@ -519,11 +583,11 @@ class SimplifiedCanonGenerator:
                 if voice_number == 2:
                     # Voice 2: transpose down by (canon_interval - 1) scale degrees
                     scale_degrees_down = canon_interval - 1
-                    new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
+                    new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down, mode="tonal")
                 elif voice_number == 3:
                     # Voice 3: transpose down by 2 * (canon_interval - 1) scale degrees
                     scale_degrees_down = 2 * (canon_interval - 1)
-                    new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down)
+                    new_pitch = self.transpose_pitch_by_scale_degrees(new_pitch, scale_degrees_down, mode="tonal")
                 
                 # Create note with full prolated duration - let meter handle splitting
                 prolated_note = abjad.makers.make_leaves([[new_pitch]], [abjad.Duration(new_duration)])
