@@ -359,6 +359,11 @@ class CanonGenerator:
             voice = abjad.Voice(all_components, name=f"Voice_{voice_index}")
             staff = abjad.Staff([voice], name=f"Staff_{voice_index}")
             
+            # Add a time signature to the first leaf of the staff
+            first_leaf = abjad.select.leaf(staff, 0)
+            time_signature = abjad.TimeSignature(self.time_signature)
+            abjad.attach(time_signature, first_leaf)
+            
             # Add staff label using instrumentName (more reliable than markup)
             # Or simply skip the label for now to avoid LilyPond errors
             # You can uncomment this if you want to try instrument names:
@@ -369,7 +374,17 @@ class CanonGenerator:
             # if all_components and len(all_components) > 0:
             #     first_leaf = abjad.select.leaf(staff, 0)
             #     abjad.attach(instrument_name, first_leaf)
-            
+
+            # split staff at measure boundaries
+            abjad.mutate.split(staff[:], [self.time_signature], cyclic=True)
+            # and then fuse according to 3/4 meter within each measure
+            tree = abjad.meter.make_best_guess_rtc(self.time_signature)
+            meter = abjad.meter.Meter(tree)
+            staff_leaves = abjad.select.leaves(staff)
+            measures =  abjad.select.group_by_measure(staff_leaves)
+            for measure in measures:
+                print(measure)
+                meter.rewrite(measure[:])
             staves.append(staff)
             
             if self.debug:
@@ -379,10 +394,6 @@ class CanonGenerator:
         # Create the score
         score = abjad.Score(staves, name="Canon")
         
-        # Add a time signature to the first leaf of the score
-        first_leaf = abjad.select.leaf(score, 0)
-        time_signature = abjad.TimeSignature(self.time_signature)
-        abjad.attach(time_signature, first_leaf)
         
         # Add appropriate clefs for better legibility
         self._add_clefs(score)
