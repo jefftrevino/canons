@@ -168,6 +168,7 @@ class CanonGenerator:
         notes = []
         
         for pitch, duration in zip(pitches, durations):
+            durations = self._long_duration_to_measure_sized_durations(duration)
             if pitch is None:
                 # Create a rest using make_leaves with nested empty list
                 rest = abjad.makers.make_leaves([[]], [duration])
@@ -178,10 +179,10 @@ class CanonGenerator:
                 # For a chord (list of pitches), it's already a list
                 if isinstance(pitch, list):
                     # It's already a list (chord)
-                    made_notes = abjad.makers.make_leaves([pitch], [duration])
+                    made_notes = abjad.makers.make_leaves([pitch], durations)
                 else:
                     # Single pitch - needs to be wrapped in a list
-                    made_notes = abjad.makers.make_leaves([[pitch]], [duration])
+                    made_notes = abjad.makers.make_leaves([[pitch]], durations)
                 notes.extend(made_notes)
         
         return notes
@@ -255,25 +256,32 @@ class CanonGenerator:
             # Create a staff for each voice
             staff = abjad.Staff(name=f"Staff_{i}")
             score.append(staff)
-        
+
         top_voice_index = self.voice_count - 1
         # for each each entering voice
-        for entering_voice_index in range(self.voice_count):
-
-            # first, add the repeated melody to each staff
-            # from the top voice, down to and including the entering voice
-            for staff_index in range(0, entering_voice_index + 1):
-                repetition_exponent = top_voice_index - staff_index
-                num_occurrences = 2 ** repetition_exponent
-                repeated_notes = notes_per_voice[staff_index] * num_occurrences
-                score[staff_index].extend(repeated_notes)
+        for entering_voice_index in range(self.voice_count): # 0, 1, 2
+            print(f"voice　{entering_voice_index} entering")
+            rest_duration = sum(prolated_durations[entering_voice_index])       
+            for staff_index in range(0, self.voice_count): # 0, 1, 2
+                # if repetition exponent is >= 0, we repeat the notes
+                # else we add rests
+                repetition_exponent = entering_voice_index - staff_index
+                if repetition_exponent < 0:
+                    print(f"adding rests to staff {staff_index} for voice {entering_voice_index}")
+                    # Add rests for this staff
+                    rests = self._long_rest_to_measure_sized_rests(rest_duration)
+                    score[staff_index].extend(rests)
+                else:
+                    print(f"adding notes to staff {staff_index} for voice {entering_voice_index}")
+                    # Add notes for this staff
+                    # Repeat the notes for this voice
+                    # according to the repetition exponent
+                    num_occurrences = 2 ** repetition_exponent
+                    repeated_notes = []
+                    for _ in range(num_occurrences):
+                        repeated_notes = [abjad.Note(n) for n in notes_per_voice[staff_index]]
+                        score[staff_index].extend(repeated_notes)
         
-            # Now, add rests to the remaining staves
-            rest_duration = sum(prolated_durations[entering_voice_index])
-            for staff_index in range(entering_voice_index + 1, self.voice_count):
-                # Split rest_duration into measure-sized chunks
-                rests = self._long_rest_to_measure_sized_rests(rest_duration)
-                score[staff_index].extend(rests)
         
         # add clefs and time signatures
         self._add_clefs(score)
@@ -297,49 +305,18 @@ class CanonGenerator:
             remaining -= d
         rests = abjad.makers.make_leaves([[]], rest_durations)
         return rests
-            
-
-                
-        
-        # for voice_index in range(self.voice_count):
-        #     if self.debug:
-        #         print(f"\n=== CREATING VOICE {voice_index} ===")
-            
-        #     # Create the notes for this voice
-        #     voice_notes = self._create_voice_notes(
-        #         transposed_pitches[voice_index],
-        #         prolated_durations[voice_index]
-        #     )
-            
-        #     # Create the initial rests for this voice
-        #     initial_rests = self._create_rests(rest_durations[voice_index])
-            
-        #     # Combine rests and notes
-        #     all_components = initial_rests + voice_notes
-            
-        #     # Create a voice and staff
-        #     voice = abjad.Voice(all_components, name=f"Voice_{voice_index}")
-        #     staff = abjad.Staff([voice], name=f"Staff_{voice_index}")
-            
-            # Add a time signature to the first leaf of the staff
-            # first_leaf = abjad.select.leaf(staff, 0)
-            # time_signature = abjad.TimeSignature(self.time_signature)
-            # abjad.attach(time_signature, first_leaf)
-
-            # split and fuse the staff
-            # to line up with measure boundaries and meter
-            # self._split_and_fuse_staff(staff)
-            # Add staff label using instrumentName (more reliable than markup)
-            # Or simply skip the label for now to avoid LilyPond errors
-            # You can uncomment this if you want to try instrument names:
-            # instrument_name = abjad.LilyPondLiteral(
-            #     fr'\set Staff.instrumentName = "Voice {voice_index + 1}"',
-            #     site="before"
-            # )
-            # if all_components and len(all_components) > 0:
-            #     first_leaf = abjad.select.leaf(staff, 0)
-            #     abjad.attach(instrument_name, first_leaf)
-
+    
+    def _long_duration_to_measure_sized_durations(self, duration):
+        # Split duration into measure-sized chunks
+        measure_duration = abjad.Duration(self.time_signature)
+        remaining = duration
+        durations = []
+        while remaining > 0:
+            d = min(measure_duration, remaining)
+            durations.append(d)
+            remaining -= d
+        return durations
+    
     def _split_and_fuse_staff(self, staff):
             # split staff at measure boundaries
             abjad.mutate.split(staff[:], [self.time_signature], cyclic=True)
@@ -349,42 +326,27 @@ class CanonGenerator:
             staff_leaves = abjad.select.leaves(staff)
             measures =  abjad.select.group_by_measure(staff_leaves)
             for measure in measures:
-                print(measure)
                 meter.rewrite(measure[:])
             
-        # # Create the score
-        # score = abjad.Score(staves, name="Canon")
-        
-        
-        # # Add appropriate clefs for better legibility
-        # self._add_clefs(score)
-        
-        # if self.debug:
-        #     print("\n=== CANON GENERATION COMPLETE ===")
-        #     print(f"Score duration: {abjad.get.duration(score)}")
-        #     print(f"Number of staves: {len(staves)}")
-        
-        # return score
-    
-    def write_lilypond(self, filename: str = "canon.ly"):
+    def write_lilypond(self, filename: str = "canon.ly", score: Optional[abjad.Score] = None):
         """
         Write the canon to a LilyPond file.
-        
+
         Args:
             filename: Output filename
+            score: Abjad Score object to write (if None, regenerate)
         """
-        score = self.generate()
-        
-        # Create LilyPond file
+        if score is None:
+            score = self.generate()
+
         lilypond_file = abjad.LilyPondFile([score])
-        
-        # Write to file
+
         with open(filename, 'w') as f:
             f.write(abjad.lilypond(lilypond_file))
-        
+
         if self.debug:
             print(f"\n=== WROTE LILYPOND FILE: {filename} ===")
-        
+
         return lilypond_file
 
 
@@ -395,22 +357,23 @@ if __name__ == "__main__":
     
     # Create melody staff
     melody_staff = abjad.Staff(arirang_lilypond)
+
     
     # Create canon generator with debug mode
     generator = CanonGenerator(
         melody_staff=melody_staff,
-        voice_count=3,
+        voice_count=6,
         transposition_interval=-12,  # Octave down
         prolation_factor=2,
         time_signature=(3, 4),  # 3/4 time for Arirang
-        debug=True
+        debug=False
     )
     
     # Generate the canon
     canon_score = generator.generate()
     
     # Write to file
-    generator.write_lilypond("canon.ly")
+    generator.write_lilypond("canon.ly", canon_score)
     
     # Show the score (if running interactively)
     # abjad.show(canon_score)
