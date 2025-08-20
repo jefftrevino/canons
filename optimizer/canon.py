@@ -4,9 +4,12 @@ Canon Generator
 A tool for creating n-voice prolation canons from a melody
 """
 
+
 import abjad
 import fractions
 from typing import List, Optional, Union
+import time
+import functools
 
 
 class CanonGenerator:
@@ -183,6 +186,8 @@ class CanonGenerator:
                 else:
                     # Single pitch - needs to be wrapped in a list
                     made_notes = abjad.makers.make_leaves([[pitch]], durations)
+                    if 1 < len(made_notes):
+                        abjad.tie(made_notes)
                 notes.extend(made_notes)
         
         return notes
@@ -362,7 +367,7 @@ if __name__ == "__main__":
     # Create canon generator with debug mode
     generator = CanonGenerator(
         melody_staff=melody_staff,
-        voice_count=6,
+        voice_count=5,
         transposition_interval=-12,  # Octave down
         prolation_factor=2,
         time_signature=(3, 4),  # 3/4 time for Arirang
