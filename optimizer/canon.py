@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# !/usr/bin/env python
 """
 Canon Generator
 A tool for creating n-voice prolation canons from a melody
@@ -40,6 +40,7 @@ class CanonGenerator:
         self.prolation_factor = fractions.Fraction(prolation_factor)
         self.time_signature = time_signature
         self.debug = debug
+        self.melody_duration = abjad.get.duration(melody_staff)
         
         # Store the original LilyPond string for recovery
         self.original_lilypond = abjad.lilypond(melody_staff)
@@ -184,105 +185,6 @@ class CanonGenerator:
         
         return notes
     
-    def _calculate_rest_durations(self, prolated_durations: List[List]) -> List:
-        """
-        Calculate the rest durations needed to prepend to each voice.
-        
-        Args:
-            prolated_durations: List of duration lists for each voice
-            
-        Returns:
-            List of rest durations for each voice
-        """
-        rest_durations = []
-        
-        # First voice has no rest
-        rest_durations.append(abjad.Duration(0))
-        
-        # Each subsequent voice waits for all previous voices to complete
-        for voice_index in range(1, self.voice_count):
-            # Calculate total duration of all previous voices
-            total_wait = abjad.Duration(0)
-            
-            for prev_voice_index in range(voice_index):
-                voice_duration = sum(prolated_durations[prev_voice_index])
-                total_wait += voice_duration
-            
-            rest_durations.append(total_wait)
-            
-            if self.debug:
-                print(f"\nVoice {voice_index} rest duration: {total_wait}")
-        
-        return rest_durations
-    
-    def _create_rests(self, duration: abjad.Duration) -> List:
-        """
-        Create rests for a given duration, splitting into appropriate values.
-        
-        Args:
-            duration: Total duration of rests needed
-            
-        Returns:
-            List of Rest objects
-        """
-        # Check if duration is effectively zero
-        if duration == abjad.Duration(0, 1):
-            return []
-        
-        rests = []
-        remaining = abjad.Duration(duration)  # Ensure it's a Duration object
-        
-        # Use standard rest values that are always assignable
-        # Start with whole rests, then half, quarter, etc.
-        standard_durations = [
-            abjad.Duration(1, 1),    # whole rest
-            abjad.Duration(1, 2),    # half rest
-            abjad.Duration(1, 4),    # quarter rest
-            abjad.Duration(1, 8),    # eighth rest
-            abjad.Duration(1, 16),   # sixteenth rest
-        ]
-        
-        # Also add dotted versions
-        dotted_durations = [
-            abjad.Duration(3, 2),    # dotted whole
-            abjad.Duration(3, 4),    # dotted half
-            abjad.Duration(3, 8),    # dotted quarter
-        ]
-        
-        # Combine and sort by duration (longest first)
-        all_durations = sorted(standard_durations + dotted_durations, reverse=True)
-        
-        # Greedily use the longest possible rests
-        while remaining > abjad.Duration(0, 1):
-            for rest_duration in all_durations:
-                if remaining >= rest_duration:
-                    # Create a rest of this duration
-                    rest_list = abjad.makers.make_leaves([[]], [rest_duration])
-                    rests.extend(rest_list)
-                    remaining = remaining - rest_duration
-                    break
-            else:
-                # If we get here, remaining is smaller than our smallest duration
-                # This shouldn't happen, but let's handle it gracefully
-                if remaining > abjad.Duration(0, 1):
-                    if self.debug:
-                        print(f"Warning: Small remaining duration {remaining}")
-                    # Try to create it anyway
-                    try:
-                        rest_list = abjad.makers.make_leaves([[]], [remaining])
-                        rests.extend(rest_list)
-                    except:
-                        if self.debug:
-                            print(f"Could not create rest for duration {remaining}")
-                    remaining = abjad.Duration(0, 1)
-        
-        if self.debug:
-            print(f"Created {len(rests)} rests from duration {duration}")
-            rest_durations = [abjad.get.duration(r) for r in rests]
-            print(f"  Rest durations: {rest_durations}")
-            print(f"  Total: {sum(rest_durations)}")
-        
-        return rests
     
     def _add_clefs(self, score: abjad.Score) -> None:
         """
@@ -333,37 +235,69 @@ class CanonGenerator:
         # Step 3: Create transposed pitches for each voice
         transposed_pitches = self._create_transposed_pitches(pitches)
         
-        # Step 4: Calculate rest durations for each voice
-        rest_durations = self._calculate_rest_durations(prolated_durations)
+        # Step 4: Create notes for each voice.
+        notes_per_voice = []
+        for pitches, durations in zip(transposed_pitches, prolated_durations):
+            notes = self._create_voice_notes(pitches, durations)
+            notes_per_voice.append(notes)
         
         # Step 5: Create the score with all voices
-        staves = []
+        # by repeating the melody in each voice
+
+        # make an empty score
+        score = abjad.Score()
+        for i in range(self.voice_count):
+            # Create a staff for each voice
+            staff = abjad.Staff(name=f"Staff_{i}")
+            score.append(staff)
         
-        for voice_index in range(self.voice_count):
-            if self.debug:
-                print(f"\n=== CREATING VOICE {voice_index} ===")
+        top_voice_index = self.voice_count - 1
+        # for each each entering voice
+        for entering_voice_index in range(self.voice_count):
+
+            # first, add the repeated melody to each staff
+            # from the top voice, down to and including the entering voice
+            for staff_index in range(0, entering_voice_index + 1):
+                repetition_exponent = top_voice_index - staff_index
+                num_occurrences = 2 ** repetition_exponent
+                repeated_notes = notes_per_voice[staff_index] * num_occurrences
+                score[staff_index].extend(repeated_notes)
+        
+            # Now, add rests to the remaining staves
+            rest_duration = sum(prolated_durations[entering_voice_index])
+            for staff_index in range(entering_voice_index + 1, self.voice_count):
+                rests = abjad.makers.make_leaves([[]], [rest_duration])
+                score[staff_index].extend(rests)
+                
+        
+        # for voice_index in range(self.voice_count):
+        #     if self.debug:
+        #         print(f"\n=== CREATING VOICE {voice_index} ===")
             
-            # Create the notes for this voice
-            voice_notes = self._create_voice_notes(
-                transposed_pitches[voice_index],
-                prolated_durations[voice_index]
-            )
+        #     # Create the notes for this voice
+        #     voice_notes = self._create_voice_notes(
+        #         transposed_pitches[voice_index],
+        #         prolated_durations[voice_index]
+        #     )
             
-            # Create the initial rests for this voice
-            initial_rests = self._create_rests(rest_durations[voice_index])
+        #     # Create the initial rests for this voice
+        #     initial_rests = self._create_rests(rest_durations[voice_index])
             
-            # Combine rests and notes
-            all_components = initial_rests + voice_notes
+        #     # Combine rests and notes
+        #     all_components = initial_rests + voice_notes
             
-            # Create a voice and staff
-            voice = abjad.Voice(all_components, name=f"Voice_{voice_index}")
-            staff = abjad.Staff([voice], name=f"Staff_{voice_index}")
+        #     # Create a voice and staff
+        #     voice = abjad.Voice(all_components, name=f"Voice_{voice_index}")
+        #     staff = abjad.Staff([voice], name=f"Staff_{voice_index}")
             
             # Add a time signature to the first leaf of the staff
             first_leaf = abjad.select.leaf(staff, 0)
             time_signature = abjad.TimeSignature(self.time_signature)
             abjad.attach(time_signature, first_leaf)
-            
+
+            # split and fuse the staff
+            # to line up with measure boundaries and meter
+            self._split_and_fuse_staff(staff)
             # Add staff label using instrumentName (more reliable than markup)
             # Or simply skip the label for now to avoid LilyPond errors
             # You can uncomment this if you want to try instrument names:
@@ -375,6 +309,7 @@ class CanonGenerator:
             #     first_leaf = abjad.select.leaf(staff, 0)
             #     abjad.attach(instrument_name, first_leaf)
 
+    def _split_and_fuse_staff(self, staff):
             # split staff at measure boundaries
             abjad.mutate.split(staff[:], [self.time_signature], cyclic=True)
             # and then fuse according to 3/4 meter within each measure
