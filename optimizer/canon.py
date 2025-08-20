@@ -205,7 +205,7 @@ class CanonGenerator:
         for voice_index, staff in enumerate(staves):
             first_leaf = abjad.select.leaf(staff, 0)
             # Use treble clef for the first voice, bass clef for others
-            clef_type = "treble" if voice_index == 0 else "bass"
+            clef_type = "treble" if voice_index < 4 else "bass"
             clef = abjad.Clef(clef_type)
             abjad.attach(clef, first_leaf)
             if self.debug:
@@ -362,6 +362,7 @@ if __name__ == "__main__":
     
     # Create melody staff
     melody_staff = abjad.Staff(arirang_lilypond)
+    abjad.mutate.transpose(melody_staff, "P15")
 
     
     # Create canon generator with debug mode
