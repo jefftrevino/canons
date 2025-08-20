@@ -114,6 +114,7 @@ class CanonGenerator:
                 print(f"Total duration: {sum(voice_durations)}")
         
         return prolated_durations
+
     
     def _create_transposed_pitches(self, pitches: List) -> List[List]:
         """
@@ -189,29 +190,33 @@ class CanonGenerator:
     def _add_clefs(self, score: abjad.Score) -> None:
         """
         Add appropriate clefs to voices for better legibility.
+        Uses treble clef for the first voice, bass clef for lower voices.
         
         Args:
             score: The score to process
         """
         staves = abjad.select.components(score, abjad.Staff)
-        
         for voice_index, staff in enumerate(staves):
-            if voice_index == 1:  # Second voice (one octave down)
-                # Add bass clef to first leaf
-                first_leaf = abjad.select.leaf(staff, 0)
-                bass_clef = abjad.Clef("bass")
-                abjad.attach(bass_clef, first_leaf)
-                if self.debug:
-                    print(f"Added bass clef to voice {voice_index}")
-                    
-            elif voice_index == 2:  # Third voice (two octaves down)
-                # Add bass clef to first leaf
-                first_leaf = abjad.select.leaf(staff, 0)
-                bass_clef = abjad.Clef("bass")
-                abjad.attach(bass_clef, first_leaf)
-                if self.debug:
-                    print(f"Added bass clef to voice {voice_index}")
-            
+            first_leaf = abjad.select.leaf(staff, 0)
+            # Use treble clef for the first voice, bass clef for others
+            clef_type = "treble" if voice_index == 0 else "bass"
+            clef = abjad.Clef(clef_type)
+            abjad.attach(clef, first_leaf)
+            if self.debug:
+                print(f"Added {clef_type} clef to voice {voice_index}")
+
+    def _add_time_signatures(self, score: abjad.Score) -> None:
+        """
+        Attach the specified time signature to the first leaf of each staff.
+        """
+        staves = abjad.select.components(score, abjad.Staff)
+        for staff in staves:
+            first_leaf = abjad.select.leaf(staff, 0)
+            if first_leaf is not None:
+                time_signature = abjad.TimeSignature(self.time_signature)
+                abjad.attach(time_signature, first_leaf)
+            if self.debug:
+                print(f"Added time signature {self.time_signature} to staff {staff.name}")
             # Voice 0 (original pitch) stays in treble clef by default
             
             # Voice 0 (original pitch) stays in treble clef by default
@@ -266,8 +271,34 @@ class CanonGenerator:
             # Now, add rests to the remaining staves
             rest_duration = sum(prolated_durations[entering_voice_index])
             for staff_index in range(entering_voice_index + 1, self.voice_count):
-                rests = abjad.makers.make_leaves([[]], [rest_duration])
+                # Split rest_duration into measure-sized chunks
+                rests = self._long_rest_to_measure_sized_rests(rest_duration)
                 score[staff_index].extend(rests)
+        
+        # add clefs and time signatures
+        self._add_clefs(score)
+        self._add_time_signatures(score)
+
+        # split and fuse the staves
+        for staff in score:
+            # split staff at measure boundaries
+            self._split_and_fuse_staff(staff)
+
+        return score
+
+    def _long_rest_to_measure_sized_rests(self, rest_duration):
+        # Split rest_duration into measure-sized chunks
+        measure_duration = abjad.Duration(self.time_signature)
+        remaining = rest_duration
+        rest_durations = []
+        while remaining > 0:
+            d = min(measure_duration, remaining)
+            rest_durations.append(d)
+            remaining -= d
+        rests = abjad.makers.make_leaves([[]], rest_durations)
+        return rests
+            
+
                 
         
         # for voice_index in range(self.voice_count):
@@ -291,13 +322,13 @@ class CanonGenerator:
         #     staff = abjad.Staff([voice], name=f"Staff_{voice_index}")
             
             # Add a time signature to the first leaf of the staff
-            first_leaf = abjad.select.leaf(staff, 0)
-            time_signature = abjad.TimeSignature(self.time_signature)
-            abjad.attach(time_signature, first_leaf)
+            # first_leaf = abjad.select.leaf(staff, 0)
+            # time_signature = abjad.TimeSignature(self.time_signature)
+            # abjad.attach(time_signature, first_leaf)
 
             # split and fuse the staff
             # to line up with measure boundaries and meter
-            self._split_and_fuse_staff(staff)
+            # self._split_and_fuse_staff(staff)
             # Add staff label using instrumentName (more reliable than markup)
             # Or simply skip the label for now to avoid LilyPond errors
             # You can uncomment this if you want to try instrument names:
@@ -320,25 +351,20 @@ class CanonGenerator:
             for measure in measures:
                 print(measure)
                 meter.rewrite(measure[:])
-            staves.append(staff)
             
-            if self.debug:
-                print(f"Voice {voice_index} total duration: {abjad.get.duration(voice)}")
-                print(f"Voice {voice_index} component count: {len(all_components)}")
-        
-        # Create the score
-        score = abjad.Score(staves, name="Canon")
+        # # Create the score
+        # score = abjad.Score(staves, name="Canon")
         
         
-        # Add appropriate clefs for better legibility
-        self._add_clefs(score)
+        # # Add appropriate clefs for better legibility
+        # self._add_clefs(score)
         
-        if self.debug:
-            print("\n=== CANON GENERATION COMPLETE ===")
-            print(f"Score duration: {abjad.get.duration(score)}")
-            print(f"Number of staves: {len(staves)}")
+        # if self.debug:
+        #     print("\n=== CANON GENERATION COMPLETE ===")
+        #     print(f"Score duration: {abjad.get.duration(score)}")
+        #     print(f"Number of staves: {len(staves)}")
         
-        return score
+        # return score
     
     def write_lilypond(self, filename: str = "canon.ly"):
         """
